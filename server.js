@@ -7,8 +7,8 @@ const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const compression = require('compression');
-const path = require('path');
 
+// Import routes
 const resumeRoutes = require('./routes/resumeRoutes');
 
 const app = express();
@@ -29,7 +29,7 @@ if (!process.env.MONGO_URI ||
 
 // Middleware
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable for simplicity, enable in production with proper configuration
+  contentSecurityPolicy: false,
 }));
 app.use(compression());
 app.use(morgan('dev'));
@@ -54,27 +54,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Serve static assets in production
-if (process.env.NODE_ENV === 'production') {
-  // Set static folder
-  const buildPath = path.join(__dirname, './client/build');
-  
-  app.use(express.static(buildPath));
-  
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      return res.sendFile(path.resolve(buildPath, 'index.html'));
-    }
-    next();
-  });
-}
-
-// Error handler
-app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err.stack);
-  res.status(500).json({
-    error: true,
-    message: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Resume API is running',
+    docs: '/api/v1/resumes',
+    health: '/health'
   });
 });
 
@@ -101,6 +86,15 @@ mongoose.connect(process.env.MONGO_URI, {
   console.error('❌ MongoDB connection error:', err.message);
   console.error('Error details:', err);
   process.exit(1);
+});
+
+// Error handler - must be after all other routes
+app.use((err, req, res, next) => {
+  console.error('❌ Unhandled error:', err.stack);
+  res.status(500).json({
+    error: true,
+    message: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
+  });
 });
 
 // Handle process-level errors
