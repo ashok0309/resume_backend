@@ -1,42 +1,50 @@
 const express = require('express');
 const router = express.Router();
 const Resume = require('../models/Resume');
+const { body, validationResult } = require('express-validator');
 
 /**
  * @route   POST /api/v1/resumes
  * @desc    Create a new resume
  * @access  Public
  */
-router.post('/', async (req, res, next) => {
-  try {
-    // Validate request body
-    if (!req.body || Object.keys(req.body).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Resume data is required' 
-      });
-    }
+router.post('/', 
+  // Request Validation
+  body('name').notEmpty().withMessage('Name is required'),
+  body('email').isEmail().withMessage('Email is invalid'),
+  async (req, res, next) => {
+    try {
+      // Validate request body
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Validation failed', 
+          errors: errors.array()
+        });
+      }
 
-    // Create and save the resume
-    const newResume = new Resume(req.body);
-    const savedResume = await newResume.save();
+      // Create and save the resume
+      const newResume = new Resume(req.body);
+      const savedResume = await newResume.save();
     
-    res.status(201).json({
-      success: true,
-      message: 'Resume created successfully',
-      data: savedResume
-    });
-  } catch (err) {
-    if (err.name === 'ValidationError') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Validation error', 
-        errors: Object.values(err.errors).map(e => e.message)
+      res.status(201).json({
+        success: true,
+        message: 'Resume created successfully',
+        data: savedResume
       });
+    } catch (err) {
+      if (err.name === 'ValidationError') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Validation error', 
+          errors: Object.values(err.errors).map(e => e.message)
+        });
+      }
+      next(err); // Pass to error handler middleware
     }
-    next(err); // Pass to error handler middleware
   }
-});
+);
 
 /**
  * @route   GET /api/v1/resumes
