@@ -1,19 +1,38 @@
+// Load environment variables at the very top
+require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const compression = require('compression');
-require('dotenv').config();
+const path = require('path');
 
 const resumeRoutes = require('./routes/resumeRoutes');
 
 const app = express();
 
-// Enhanced Middleware
-app.use(helmet()); // Security headers
-app.use(compression()); // Compress responses
-app.use(morgan('dev')); // Request logging
+// Fix any URL encoded characters in MongoDB URI
+if (process.env.MONGO_URI && process.env.MONGO_URI.includes('%21')) {
+  process.env.MONGO_URI = process.env.MONGO_URI.replace('%21', '!');
+  console.log('✅ Fixed MongoDB URI encoding for special characters');
+}
+
+// Basic validation for Mongo URI
+if (!process.env.MONGO_URI || 
+    (!process.env.MONGO_URI.startsWith('mongodb://') && !process.env.MONGO_URI.startsWith('mongodb+srv://'))) {
+  console.error('❌ Invalid or missing MONGO_URI. It must start with "mongodb://" or "mongodb+srv://"');
+  console.error('Current URI format:', process.env.MONGO_URI ? process.env.MONGO_URI.substring(0, 10) + '...' : 'undefined');
+  process.exit(1);
+}
+
+// Middleware
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable for simplicity, enable in production with proper configuration
+}));
+app.use(compression());
+app.use(morgan('dev'));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -22,52 +41,77 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Routes with versioning
+// API Routes
 app.use('/api/v1/resumes', resumeRoutes);
 
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', time: new Date().toISOString() });
+  res.status(200).json({ 
+    status: 'ok', 
+    environment: process.env.NODE_ENV,
+    time: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
 });
 
-// Error handling middleware
+// Serve static assets in production
+if (process.env.NODE_ENV === 'production') {
+  // Set static folder
+  const buildPath = path.join(__dirname, './client/build');
+  
+  app.use(express.static(buildPath));
+  
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      return res.sendFile(path.resolve(buildPath, 'index.html'));
+    }
+    next();
+  });
+}
+
+// Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Unhandled error:', err.stack);
-  res.status(500).json({ 
-    error: true, 
+  res.status(500).json({
+    error: true,
     message: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
   });
 });
 
-// MongoDB connection with options
+// Debug MongoDB connection
+console.log('Attempting to connect to MongoDB...');
+console.log('MONGO_URI prefix:', process.env.MONGO_URI ? 
+  `${process.env.MONGO_URI.split('@')[0].split('//')[0]}//${process.env.MONGO_URI.split('@')[0].split('//')[1].split(':')[0]}:****` : 'undefined');
+
+// MongoDB connection with enhanced error handling
 mongoose.connect(process.env.MONGO_URI, {
-  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of default 30s
-  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
 })
 .then(() => {
   console.log('✅ MongoDB connected successfully');
-  
-  // Server start
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
-    console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode at http://localhost:${PORT}`);
+    console.log(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV || 'development'} mode]`);
   });
 })
 .catch((err) => {
-  console.error('❌ MongoDB connection error:', err);
-  process.exit(1); // Exit process with failure
+  console.error('❌ MongoDB connection error:', err.message);
+  console.error('Error details:', err);
+  process.exit(1);
 });
 
-// Handle uncaught exceptions
+// Handle process-level errors
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
   process.exit(1);
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason) => {
   console.error('❌ Unhandled Promise Rejection:', reason);
   process.exit(1);
 });
 
-module.exports = app; // Export for testing
+module.exports = app;
